@@ -1,80 +1,54 @@
-const express = require('express');
-const axios = require('axios');
+const fetch = require('node-fetch');
+const http = require('http');
 
-// --- RENK KODLARI ---
-const colorBlue = "\x1b[34m";
-const colorRed = "\x1b[31m";
-const colorYellow = "\x1b[33m";
-const colorReset = "\x1b[0m";
+const TOKENS = process.env.TOKENS ? process.env.TOKENS.split(',') : [];
+const CHANNEL_IDS = process.env.CHANNEL_IDS ? process.env.CHANNEL_IDS.split(',') : [];
+const MESSAGE = process.env.MESSAGE;
 
-// --- RENDER ENVIRONMENT AYARLARI ---
-const TOKENS = process.env.TOKENS ? process.env.TOKENS.split(',').map(t => t.trim()) : [];
-const CHANNEL_IDS = process.env.CHANNEL_IDS ? process.env.CHANNEL_IDS.split(',').map(c => c.trim()) : [];
-const MESSAGE = process.env.MESSAGE || "Varsayılan Mesaj: Lütfen Render'dan MESSAGE değişkenini ayarlayın.";
-const DELAY = 100; // 0 saniyeye en yakın (0.1 sn) güvenli gecikme
+let currentTokenIndex = 0;
 
-// --- KONTROL MEKANİZMASI ---
-if (TOKENS.length === 0 || CHANNEL_IDS.length === 0) {
-    console.log(`${colorRed}[HATA] TOKENS veya CHANNEL_IDS değişkenleri Render panelinde bulunamadı!${colorReset}`);
+if (!TOKENS.length || !CHANNEL_IDS.length || !MESSAGE) {
+    console.error("Hata: Değişkenler eksik!");
     process.exit(1);
 }
 
-// --- WEB SUNUCUSU (UptimeRobot İçin) ---
-const app = express();
-const PORT = process.env.PORT || 3000;
+const sendTick = async () => {
+    const token = TOKENS[currentTokenIndex].trim();
+    // Rastgele bir kanal seçiyoruz (daha güvenli)
+    const channelId = CHANNEL_IDS[Math.floor(Math.random() * CHANNEL_IDS.length)].trim();
 
-app.get('/', (req, res) => res.send('Sistem 7/24 Aktif!'));
+    // Sıradaki hesaba geç
+    currentTokenIndex = (currentTokenIndex + 1) % TOKENS.length;
 
-app.listen(PORT, () => {
-    console.log(`${colorYellow}--------------------------------------------------${colorReset}`);
-    console.log(`${colorYellow}[SİSTEM] Sunucu Başlatıldı. Port: ${PORT}${colorReset}`);
-    console.log(`${colorYellow}[SİSTEM] Aktif Token Sayısı: ${TOKENS.length}${colorReset}`);
-    console.log(`${colorYellow}[SİSTEM] Aktif Kanal Sayısı: ${CHANNEL_IDS.length}${colorReset}`);
-    console.log(`${colorYellow}--------------------------------------------------${colorReset}`);
-    startMessaging();
-});
-
-// --- MESAJ GÖNDERME MOTORU ---
-async function sendMessage(token, channelId) {
     try {
-        await axios.post(
-            `https://discord.com/api/v9/channels/${channelId}/messages`,
-            { content: MESSAGE },
-            { headers: { "Authorization": token, "Content-Type": "application/json" } }
-        );
+        const response = await fetch(`https://discord.com/api/v9/channels/${channelId}/messages`, {
+            method: 'POST',
+            headers: {
+                'Authorization': token,
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0'
+            },
+            body: JSON.stringify({ content: MESSAGE })
+        });
 
-        // Mavi renkli başarı logu
-        console.log(`${colorBlue}[MESAJ GİTTİ] KANAL: ${channelId} | TOKEN: ...${token.slice(-5)}${colorReset}`);
-        return true;
-    } catch (error) {
-        if (error.response) {
-            if (error.response.status === 429) {
-                const wait = error.response.data.retry_after * 1000;
-                console.log(`${colorYellow}[HIZ SINIRI] Discord 'Dur' dedi. ${wait/1000}sn bekleniyor...${colorReset}`);
-                await new Promise(r => setTimeout(r, wait));
-                return await sendMessage(token, channelId);
-            }
-            console.log(`${colorRed}[HATA] Kod: ${error.response.status} - Mesaj: ${error.response.data.message}${colorReset}`);
+        if (response.ok) {
+            console.log(`[+] Hesap ${currentTokenIndex + 1} gönderdi.`);
         } else {
-            console.log(`${colorRed}[BAĞLANTI HATASI] ${error.message}${colorReset}`);
+            console.log(`[!] Hata/Limit: ${response.status}. Atlanıyor...`);
         }
-        return false;
+    } catch (error) {
+        console.log("Bağlantı hatası...");
     }
-}
 
-// --- ANA DÖNGÜ ---
-async function startMessaging() {
-    while (true) {
-        for (const token of TOKENS) {
-            for (const channelId of CHANNEL_IDS) {
-                await sendMessage(token, channelId);
-                // Render CPU'yu yormamak ve ban riskini azaltmak için milisaniyelik bekleme
-                await new Promise(r => setTimeout(r, DELAY));
-            }
-        }
-    }
-}
+    // --- BURASI KRİTİK ---
+    // 333ms ile 666ms arasında rastgele bir sayı seçer
+    const randomDelay = Math.floor(Math.random() * (666 - 333 + 1)) + 333;
+    
+    // Bir sonraki atışı bu rastgele sürede yap
+    setTimeout(sendTick, randomDelay);
+};
 
-// --- ANTI-CRASH (ASLA KAPANMAZ) ---
-process.on('unhandledRejection', (reason) => console.log(`${colorRed}[KRİTİK] Hata: ${reason}${colorReset}`));
-process.on('uncaughtException', (err) => console.log(`${colorRed}[KRİTİK] Hata: ${err.message}${colorReset}`));
+// İlk tetiklemeyi başlat
+sendTick();
+
+http.createServer((req, res) => res.end("Dinamik Mod Aktif")).listen(process.env.PORT || 3000);
